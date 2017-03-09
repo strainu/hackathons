@@ -43,7 +43,7 @@ def filterName(oldName):
 def fixKey(code):
     return u"%010d" % int(code)
 
-def main():
+def wikidataAndNominatim():
     out = {}
     headers = {
         'User-Agent': 'School scripts by Strainu<osm@strainu.ro>',
@@ -57,7 +57,7 @@ def main():
         name = filterName(retea[key]['Denumire'])
         newkey = fixKey(key)
         out[newkey] = {}
-        out[newkey]['cod'] = retea[key]['Cod']
+        out[newkey]['cod'] = newkey
         out[newkey]['nume'] = retea[key]['Denumire']
         out[newkey]['nume_ascii'] = name
         out[newkey]['str'] = retea[key][u'Stradă'].strip()
@@ -72,11 +72,14 @@ def main():
         for wdkey in wikidata:
             label = filterName(wikidata[wdkey]['itemLabel'])
             if name.find(label) > -1 or label.find(name)> -1:
+                print name
+                print label
                 out[newkey]['wikidata'] = wikidata[wdkey]['item']
-                out[newkey]['lat'] = wikidata[wdkey]['lat']
-                out[newkey]['lon'] = wikidata[wdkey]['lon']
+                out[newkey]['lat'] = wikidata[wdkey].get('lat')  or u""
+                out[newkey]['lon'] = wikidata[wdkey].get('lon')  or u""
                 break
-        else:
+
+        if not out[newkey]['lat']:
             if out[newkey]['str'].strip() == u"" or out[newkey]['nr'].strip() == u"":
                 continue
             cache = "wikiro/data/schools/{0}.json".format(newkey)
@@ -107,12 +110,14 @@ def main():
                             continue
                         out[newkey]['lat'] = resp['lat']
                         out[newkey]['lon'] = resp['lon']
+                        out[newkey]['osm'] = resp['osm_id']
                         print resp['class']
+                        lastkey = key
                         break
 
     with open( "wikiro/data/schools/scoli_geocoded.json", 'w' ) as jsonFile:
         jsonFile.write( json.dumps( out, indent=2) )
-    keys = out[newkey].keys()
+    keys = out[lastkey].keys()
     keys.sort()
     with open( "wikiro/data/schools/scoli_geocoded.csv", 'w' ) as csvFile:
         dw = csv.DictWriter(csvFile, fieldnames=keys)
@@ -120,10 +125,48 @@ def main():
         for entry in out:
             dw.writerow({k:v.encode('utf8') for k,v in out[entry].items()})
         
-    
 
+def osmNodes():
+    osm = csvUtils.csvToJson("wikiro/data/schools/scoli_osm_node.csv", field=u'id')
+    scoli = {}
+    with open( "wikiro/data/schools/scoli_geocoded.json", 'r' ) as jsonFile:
+        scoli = json.load( jsonFile )
+    print len(scoli)
+    for key in scoli:
+        #if key == "4061206655":
+        #    import pdb
+        #    pdb.set_trace()
+        if scoli[key]['lat']:
+            continue
+        for id in osm:
+            if scoli[key]['SIRUTA LOCALITATE'] != osm[id][u'siruta']:
+                continue
+            name = scoli[key][u'nume_ascii']
+            label = osm[id][u'name']
+            if name and label and (name.find(label) > -1 or label.find(name)> -1):
+                print('our', name)
+                print('osm', label)
+                print('before', scoli[key])
+                scoli[key]['lat'] = osm[id]['latitude']
+                scoli[key]['lon'] = osm[id]['longitude']
+                scoli[key]['osm'] = id
+                lastkey = key
+                print('after', scoli[key])
+                print u"----------------------------------------------------------------------"
 
+    with open( "wikiro/data/schools/scoli_geocoded_full.json", 'w' ) as jsonFile:
+        jsonFile.write( json.dumps( scoli, indent=2) )
+    keys = scoli[lastkey].keys()
+    keys.sort()
+    with open( "wikiro/data/schools/scoli_geocoded_full.csv", 'w' ) as csvFile:
+        dw = csv.DictWriter(csvFile, fieldnames=keys)
+        dw.writeheader()
+        for entry in scoli:
+            dw.writerow({k:v.encode('utf8') for k,v in scoli[entry].items()})
 
+def main():
+    wikidataAndNominatim()
+    osmNodes()
 
 if __name__ == "__main__":
     main()
