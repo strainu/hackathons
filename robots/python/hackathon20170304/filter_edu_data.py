@@ -15,6 +15,8 @@ import json
 import time
 import os
 
+from fuzzywuzzy import fuzz
+
 sys.path.append("wikiro/robots/python/pywikipedia")
 import csvUtils
 
@@ -29,7 +31,7 @@ def filterName(oldName):
     name = name.replace(u"Ă", u"A")
     name = name.replace(u"Â", u"A")
     name = name.replace(u"Á", u"A")
-    name = name.replace(u"Î", u"A")
+    name = name.replace(u"Î", u"I")
     name = name.replace(u"Ș", u"S")
     name = name.replace(u"Ț", u"T")
     name = name.replace(u"Ş", u"S")
@@ -37,12 +39,14 @@ def filterName(oldName):
     name = name.replace(u"’", u" ")
     name = name.replace(u"„", u" ")
     name = name.replace(u"”", u" ")
+    name = name.replace(u"“", u" ")
     name = name.replace(u"GIMNAZIALA", u"GENERALA")
     name = name.replace(u"GPN", u"GRADINITA CU PROGRAM NORMAL")
     name = name.replace(u"GPP", u"GRADINITA CU PROGRAM PRELUNGIT")
     name = name.replace(u" PP ", u" PROGRAM PRELUNGIT ")
+    name = name.replace(u" PN ", u" PROGRAM NORMAL ")
     name = name.replace(u"GRAD CU", u"GRADINITA CU")
-    name = name.replace(u"GRADINITA CU PR", u"GRADINITA CU PROGRAM")
+    name = name.replace(u"GRADINITA CU PR ", u"GRADINITA CU PROGRAM ")
     name = name.replace(u"GRADINITA PROG", u"GRADINITA CU PROGRAM")
     name = name.replace(u"GRADINITA PR", u"GRADINITA CU PROGRAM")
     name = name.replace(u"PROGRAM N ", u"PROGRAM NORMAL ")
@@ -52,10 +56,11 @@ def filterName(oldName):
         name = oldName.replace("  "," ")
     return name.strip()
 
-def filterNameAndCity(oldName, city, county=None):
-    name = filterName(oldName)
+def filterCity(oldName, city, county=None):
     city = filterName(city)
+    name = oldName
     name = name.replace(u"COMUNA " + city, u"")
+    name = name.replace(u"COM " + city, u"")
     name = name.replace(u"SAT " + city, u"")
     name = name.replace(u"ORASUL " + city, u"")
     name = name.replace(u"ORAS " + city, u"")
@@ -76,6 +81,42 @@ def filterNameAndCity(oldName, city, county=None):
 def fixKey(code):
     return u"%010d" % int(code)
 
+def isFuzzyMatch(needle, haystack):
+    if needle == haystack:
+        return 100
+    r = fuzz.ratio(needle, haystack)
+    if r < 75:
+        # print (r, needle, haystack)
+        return 0
+
+    #get rid of false positive with different numbers
+    table = {ord(char): None for char in '1234567890 '}
+    if needle.translate(table) == haystack.translate(table):
+        # print (table, needle, haystack)
+        return 0
+
+    p = os.path.commonprefix([needle, haystack])
+    #haystack includes needle or the other way around
+    if p == needle or p == haystack:
+        pass
+    else:
+        needle = needle.replace(p, u"")
+        haystack = haystack.replace(p, u"")
+    r2 = fuzz.ratio(needle, haystack)
+    w = fuzz.WRatio(needle, haystack)
+    #TODO: arbitrary values, explore some more
+    if r2 < 60:
+        # print('False prefix', r, p, needle, haystack)
+        return 0
+    if r2 < 75 and w < 80:
+        # print('False wratio', w, p, needle, haystack)
+        return 0
+    # print needle
+    # print haystack
+    # print r
+    # print w
+    return r
+
 def wikidataAndNominatim():
     out = {}
     headers = {
@@ -87,7 +128,7 @@ def wikidataAndNominatim():
     coduri = csvUtils.csvToJson("wikiro/data/schools/coduri_scoli.csv", field='COD SIIIR')
     url = u"https://nominatim.openstreetmap.org/search?format=json&street={0}+{1}&city={2}&county={3}&country=ROM%C3%82NIA&dedupe=1"
     for key in retea:
-        name = filterNameAndCity(retea[key]['Denumire'], retea[key]['Localitate'].strip())
+        name = filterName(retea[key]['Denumire'])
         newkey = fixKey(key)
         out[newkey] = {}
         out[newkey]['cod'] = newkey
@@ -171,6 +212,7 @@ def osmNodes():
         #    pdb.set_trace()
         if 'osm' not in scoli[key]:
             scoli[key]['osm'] = ''
+        scoli[key]['safe'] = 0
         if scoli[key]['lat']:
             continue
         for id in osm:
@@ -178,15 +220,19 @@ def osmNodes():
                 continue
             name = scoli[key][u'nume_ascii']
             label = osm[id][u'name']
-            if name and label and (name.find(label) > -1 or label.find(name)> -1):
+            if not label:
+                continue
+            score = isFuzzyMatch(name, label)
+            if score and score > scoli[key]['safe']:
                 print('our', name)
                 print('osm', label)
-                print('before', scoli[key])
+                # print('before', scoli[key])
                 scoli[key]['lat'] = osm[id]['latitude']
                 scoli[key]['lon'] = osm[id]['longitude']
                 scoli[key]['osm'] = id
+                scoli[key]['safe'] = score
                 lastkey = key
-                print('after', scoli[key])
+                # print('after', scoli[key])
                 print u"----------------------------------------------------------------------"
 
     with open( "wikiro/data/schools/scoli_geocoded_osm.json", 'w' ) as jsonFile:
@@ -197,7 +243,7 @@ def osmNodes():
         dw = csv.DictWriter(csvFile, fieldnames=keys)
         dw.writeheader()
         for entry in scoli:
-            dw.writerow({k:v.encode('utf8') for k,v in scoli[entry].items()})
+            dw.writerow({k:unicode(v).encode('utf8') for k,v in scoli[entry].items()})
 
 def roaepSchools():
     roaep = csvUtils.csvToJson("wikiro/data/schools/scoli_roaep.csv", field=u'SEDIU_SECT')
@@ -206,6 +252,8 @@ def roaepSchools():
         scoli = json.load( jsonFile )
     print len(scoli)
     for key in scoli:
+        scoli[key]['safe'] = 0
+        scoli[key]['roaep'] = 0
         if scoli[key]['lat']:
             continue
         for id in roaep:
@@ -213,16 +261,19 @@ def roaepSchools():
                 continue
             name = scoli[key][u'nume_ascii']
             label = filterName(roaep[id][u'SEDIU_SECT'])
-            if name and label and (name.find(label) > -1 or label.find(name)> -1):
+            score = isFuzzyMatch(name, label)
+            if score and score > scoli[key]['safe']:
                 # print('our', name)
                 # print('roaep', label)
                 # print('before', scoli[key])
                 scoli[key]['lat'] = roaep[id]['lat']
                 scoli[key]['lon'] = roaep[id]['lon']
+                scoli[key]['roaep'] = roaep[id][u'SEDIU_SECT']
+                scoli[key]['safe'] = score
                 lastkey = key
                 # print('after', scoli[key])
                 # print u"----------------------------------------------------------------------"
-                break
+                
         else:
             pass # print('not found', scoli[key])
 
@@ -234,11 +285,11 @@ def roaepSchools():
         dw = csv.DictWriter(csvFile, fieldnames=keys)
         dw.writeheader()
         for entry in scoli:
-            dw.writerow({k:v.encode('utf8') for k,v in scoli[entry].items()})
+            dw.writerow({k:unicode(v).encode('utf8') for k,v in scoli[entry].items()})
 
 def main():
-    wikidataAndNominatim()
-    osmNodes()
+    # wikidataAndNominatim()
+    # osmNodes()
     roaepSchools()
 
 if __name__ == "__main__":
