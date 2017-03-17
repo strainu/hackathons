@@ -85,8 +85,9 @@ def isFuzzyMatch(needle, haystack):
     if needle == haystack:
         return 100
     r = fuzz.ratio(needle, haystack)
-    if r < 75:
-        # print (r, needle, haystack)
+    t = fuzz.token_set_ratio(needle, haystack)
+    if r < 75 and t < 100:
+        # print (r, t, needle, haystack)
         return 0
 
     #get rid of false positive with different numbers
@@ -99,17 +100,20 @@ def isFuzzyMatch(needle, haystack):
     #haystack includes needle or the other way around
     if p == needle or p == haystack:
         pass
+        r2 = r
+        t2 = t
     else:
         needle = needle.replace(p, u"")
         haystack = haystack.replace(p, u"")
-    r2 = fuzz.ratio(needle, haystack)
-    w = fuzz.WRatio(needle, haystack)
+        r2 = fuzz.ratio(needle, haystack)
+        t2 = fuzz.token_set_ratio(needle, haystack)
+    w = fuzz.partial_ratio(needle, haystack)
     #TODO: arbitrary values, explore some more
-    if r2 < 60:
-        # print('False prefix', r, p, needle, haystack)
+    if r2 < 60 and t2 < 100 and w < 100:
+        # print('False prefix', r2, t2, w, p, needle, haystack)
         return 0
-    if r2 < 75 and w < 80:
-        # print('False wratio', w, p, needle, haystack)
+    if r2 < 70 and w < 80:
+        print('False wratio', r2, w, p, needle, haystack)
         return 0
     # print needle
     # print haystack
@@ -253,7 +257,7 @@ def roaepSchools():
     print len(scoli)
     for key in scoli:
         scoli[key]['safe'] = 0
-        scoli[key]['roaep'] = 0
+        scoli[key]['roaep'] = ""
         if scoli[key]['lat']:
             continue
         for id in roaep:
